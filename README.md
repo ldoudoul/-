@@ -5,7 +5,7 @@
 ## 当前版本
 
 - 已完成响应式页面、拖拽上传、输出格式选择、转换路径动画和活动记录。
-- 已加入音频转换类别，支持 MP3、WAV、M4A、FLAC、OGG 输出，并使用 `ffmpeg.wasm` 在浏览器本地处理。
+- 已加入音频转换类别，支持 MP3、WAV、M4A、FLAC、OGG 输出；检测到本机 FFmpeg 时优先通过本地服务端转换，浏览器端 `ffmpeg.wasm` 作为备用。
 - 文档转换已接入本地 `server.py` 服务：Markdown/TXT → HTML、HTML → TXT 使用内置转换器；Office、PDF、EPUB 等由 LibreOffice/Pandoc 接管（引擎存在时）。
 - 转换完成后提供“打开转换后的文件”和“重新下载”按钮，并根据结果类型提供 HTML/PDF、文本、音频或格式说明预览。
 - 转换前会显示输入格式、输出格式、可用引擎和兼容性提示，避免把演示输出误认为真实转换结果。
@@ -27,10 +27,10 @@ Windows 用户也可以双击 `start-format-lab.bat` 启动服务。
 
 - Markdown/TXT → HTML、HTML → TXT 使用内置转换器；
 - DOCX、PPTX、XLSX、PDF、EPUB 等格式由 LibreOffice/Pandoc 接管；
-- 当前开发电脑未安装 LibreOffice/Pandoc，因此 Office/PDF 转换会给出明确提示，不会生成伪结果；
-- 音频转换不经过本地 Python 服务，使用浏览器端 FFmpeg/WASM。
+- 当前开发电脑已检测到 Pandoc 3.11 和 LibreOffice 26.8，Office → PDF 转换会调用 LibreOffice；服务会按实际引擎状态给出提示，不会生成伪结果；
+- 音频转换优先经过本地 Python 服务调用 FFmpeg，浏览器端 FFmpeg/WASM 作为备用，不上传云端。
 
-当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT 和音频格式转换；Office/PDF/EPUB 需要按下方 Docker 方式启动完整引擎。
+当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT、Markdown → EPUB、DOCX/PPTX/XLSX → PDF 和音频格式转换；PDF 作为输入时仍受 LibreOffice 导入过滤器限制。
 
 ## Docker 启动完整文档引擎
 
@@ -56,7 +56,10 @@ docker run --rm -p 4173:4173 format-lab
 - [x] 增加转换前后文件预览与格式兼容性提示。
 - [x] 接入浏览器端 FFmpeg/WASM 音频转换和本地文档转换接口。
 - [x] 补充需求设计、AI 提示词记录和 Git 协作说明。
-- [ ] 在具备 LibreOffice/Pandoc 的 Docker 环境中验证 PDF、DOCX、PPTX、EPUB 的真实转换。
+- [x] 在本机验证 Pandoc 真实转换：Markdown → EPUB。
+- [x] 接入 LibreOffice，并验证 DOCX/PPTX/XLSX → PDF 的真实转换。
+- [ ] 增加 PDF 作为输入的专用文本提取或 OCR 转换路径。
+- [x] 修复音频远程 FFmpeg/WASM 加载失败时的本机 FFmpeg 服务端兜底，并验证 WAV → MP3/WAV/M4A/FLAC/OGG。
 - [ ] 根据课程小组的实际成员、分支、PR 和冲突记录补充最终提交信息。
 
 ## 参考素材
