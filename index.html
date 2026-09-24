@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Format Lab · 可视化文件格式转换器" />
+    <title>Format Lab · 可视化文件格式转换器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-mark"><span>F</span></div>
+        <div class="sidebar-label">FORMAT<br />LAB</div>
+        <nav class="side-nav" aria-label="主导航">
+          <button class="side-link active" type="button" data-scroll="converter">
+            <span class="nav-icon">↗</span><span>转换台</span>
+          </button>
+          <button class="side-link" type="button" data-scroll="visualizer">
+            <span class="nav-icon">◫</span><span>可视化</span>
+          </button>
+          <button class="side-link" type="button" data-scroll="guide">
+            <span class="nav-icon">?</span><span>使用说明</span>
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="online-dot"></span>
+          <span>本地演示模式</span>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="crumb"><span class="crumb-dot"></span> 文件转换 · 课程实验原型</div>
+          <div class="topbar-actions">
+            <span class="version-pill">BETA 0.1</span>
+            <button class="icon-button" type="button" title="帮助">?</button>
+          </div>
+        </header>
+
+        <section class="hero" id="guide">
+          <div class="hero-copy">
+            <p class="eyebrow">DOCUMENT CONVERSION, MADE VISIBLE</p>
+            <h1>可视化文件<br /><em>格式转换器</em></h1>
+            <p class="hero-text">上传文档或音频，选择目标格式，跟随奶蛙一起观察“解析—转换—导出”的完整路径。</p>
+            <div class="hero-notes">
+              <div class="note-line"><span>01</span><b>可视化</b> 展示中间数据结构</div>
+              <div class="note-line"><span>02</span><b>隐私优先</b> 初版文件不上传云端</div>
+            </div>
+          </div>
+          <div class="hero-character-wrap" aria-label="黄色角色参考图">
+            <div class="character-orbit orbit-a"></div>
+            <div class="character-orbit orbit-b"></div>
+            <img class="hero-character" src="./assets/character-side.jpg" alt="黄色角色侧面图" />
+            <div class="character-tag"><span>YOUR FILE</span><strong>IS IN<br />GOOD HANDS</strong></div>
+            <div class="hero-badge">⌁<br /><span>SAFE<br />FLOW</span></div>
+          </div>
+        </section>
+
+        <section class="workspace-section" id="converter">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">01 / CONVERTER</p>
+              <h2>开始一次转换</h2>
+            </div>
+            <span class="demo-state"><i></i> 浏览器本地转换</span>
+          </div>
+
+          <div class="converter-grid">
+            <div class="panel upload-panel">
+              <div class="panel-topline"><span>输入文件</span><span class="tiny-muted">DRAG &amp; DROP</span></div>
+              <label class="dropzone" id="dropzone" for="fileInput">
+                <input id="fileInput" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.odt,.txt,.md,.html,.epub,.json,.csv,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.webm,audio/*" />
+                <div class="upload-symbol"><span></span><span></span><span></span></div>
+                <strong>把文件放到这里</strong>
+                <small>或点击选择 PDF、Word、PPT、HTML、EPUB 等文件</small>
+                <span class="browse-link">浏览本地文件 <b>↗</b></span>
+              </label>
+              <div class="selected-file" id="selectedFile" hidden>
+                <div class="file-type" id="fileType">DOC</div>
+                <div class="file-meta"><strong id="fileName">尚未选择文件</strong><span id="fileSize">等待输入</span></div>
+                <button class="remove-file" type="button" id="removeFile" aria-label="移除文件">×</button>
+              </div>
+            </div>
+
+            <div class="panel settings-panel">
+              <div class="panel-topline"><span>转换设置</span><span class="tiny-muted">OUTPUT</span></div>
+              <div class="setting-block">
+                <label for="categorySelect">转换类别</label>
+                <div class="select-wrap"><select id="categorySelect"><option value="document">文档转换</option><option value="office">Office 文件</option><option value="ebook">电子书</option><option value="data">数据文件</option><option value="audio">音频转换</option></select><span>⌄</span></div>
+              </div>
+              <div class="setting-block">
+                <label for="formatSelect">输出格式</label>
+                <div class="select-wrap"><select id="formatSelect"><option value="pdf">PDF · Portable Document</option><option value="docx">DOCX · Word 文档</option><option value="html">HTML · 网页文件</option><option value="epub">EPUB · 电子书</option></select><span>⌄</span></div>
+              </div>
+              <div class="quick-formats"><span>快捷选择</span><button type="button" data-format="pdf">PDF</button><button type="button" data-format="docx">DOCX</button><button type="button" data-format="html">HTML</button><button type="button" data-format="epub">EPUB</button></div>
+              <div class="compatibility-hint" id="compatibilityHint" role="status" aria-live="polite">选择文件后显示兼容性提示</div>
+              <button class="convert-button" type="button" id="convertButton"><span>开始转换</span><b>→</b></button>
+              <p class="server-hint" id="engineHint">正在检测文档转换引擎…</p>
+              <div class="result-actions" id="resultActions" hidden>
+                <button class="open-result-button" type="button" id="openOutputButton"><span>↗</span>打开转换后的文件</button>
+                <a class="download-result-link" id="downloadOutputLink" href="#" download>↓ 重新下载</a>
+              </div>
+              <div class="result-preview panel" id="resultPreview" hidden>
+                <div class="preview-header"><span>转换结果预览</span><span id="previewMeta">等待结果</span></div>
+                <div class="preview-body" id="previewBody"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="visualizer-section" id="visualizer">
+          <div class="section-heading compact-heading">
+            <div><p class="section-kicker">02 / VISUALIZER</p><h2>转换路径</h2></div>
+            <span class="path-label">INPUT → PARSE → EXPORT</span>
+          </div>
+          <div class="path-card panel">
+            <div class="path-line"><div class="path-progress" id="pathProgress"></div></div>
+            <div class="path-node active" data-step="0"><span class="node-icon">⌁</span><strong>输入</strong><small>识别文件</small></div>
+            <div class="path-node" data-step="1"><span class="node-icon">⌘</span><strong>解析</strong><small>读取结构</small></div>
+            <div class="path-node" data-step="2"><span class="node-icon">◇</span><strong>转换</strong><small>重组数据</small></div>
+            <div class="path-node" data-step="3"><span class="node-icon">↓</span><strong>导出</strong><small>生成结果</small></div>
+            <div class="path-character"><img src="./assets/character-side.jpg" alt="奶蛙侧面图" /><span>LET'S<br /><b>GO!</b></span></div>
+          </div>
+          <div class="insight-grid">
+            <div class="panel insight-card"><span class="insight-index">A</span><div><p>中间数据结构</p><strong id="structureValue">等待文件输入</strong></div><span class="insight-icon">{ }</span></div>
+            <div class="panel insight-card"><span class="insight-index">B</span><div><p>预计处理时间</p><strong id="timeValue">—</strong></div><span class="insight-icon">◷</span></div>
+            <div class="panel insight-card"><span class="insight-index">C</span><div><p>文件安全状态</p><strong id="privacyValue">浏览器本地</strong></div><span class="insight-icon">⌑</span></div>
+          </div>
+        </section>
+
+        <section class="activity-section">
+          <div class="section-heading compact-heading"><div><p class="section-kicker">03 / ACTIVITY LOG</p><h2>活动记录</h2></div><button type="button" class="clear-log" id="clearLog">清空记录</button></div>
+          <div class="activity-card panel" id="activityLog"><div class="empty-log"><span>✦</span><p>每一次转换都会在这里留下足迹。</p><small>选择文件后开始体验</small></div></div>
+        </section>
+
+        <footer class="footer"><span>FORMAT LAB / DOCUMENT CONVERSION PROTOTYPE</span><span>DESIGNED FOR VIBE CODING</span></footer>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status"></div>
+    <script src="./app.js?v=20260924-preview"></script>
+  </body>
+</html>
