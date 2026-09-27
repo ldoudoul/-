@@ -352,6 +352,7 @@ async function convertDocumentInBrowser() {
 }
 
 const browserLibraryPromises = new Map();
+let docxBrowserRuntimePromise = null;
 function loadBrowserLibrary(url, ready, label) {
   if (ready()) return Promise.resolve();
   if (browserLibraryPromises.has(url)) return browserLibraryPromises.get(url);
@@ -365,6 +366,29 @@ function loadBrowserLibrary(url, ready, label) {
   });
   browserLibraryPromises.set(url, promise);
   return promise;
+}
+
+async function loadDocxBrowserRuntime() {
+  if (window.docx?.Document && window.docx?.Packer) return window.docx;
+  if (docxBrowserRuntimePromise) return docxBrowserRuntimePromise;
+  docxBrowserRuntimePromise = (async () => {
+    let lastError;
+    for (const url of [
+      'https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.mjs',
+      'https://unpkg.com/docx@9.5.1/dist/index.mjs',
+    ]) {
+      try {
+        const imported = await withTimeout(import(url), 15000, 'Word 导出引擎加载超时');
+        const runtime = imported?.Document ? imported : imported?.default;
+        if (runtime?.Document && runtime?.Packer) return runtime;
+        lastError = new Error('Word 导出引擎模块内容不完整');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Word 导出引擎加载失败');
+  })().catch((error) => { docxBrowserRuntimePromise = null; throw error; });
+  return docxBrowserRuntimePromise;
 }
 
 async function convertDocxToPdfInBrowser() {
@@ -462,8 +486,9 @@ function pdfTextLines(items) {
 async function convertPdfToDocxInBrowser() {
   await Promise.all([
     loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => Boolean(window.pdfjsLib?.getDocument), 'PDF 解析引擎'),
-    loadBrowserLibrary('https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.umd.cjs', () => Boolean(window.docx?.Document && window.docx?.Packer), 'Word 导出引擎'),
+    loadDocxBrowserRuntime(),
   ]);
+  const docxRuntime = await loadDocxBrowserRuntime();
   // Cloudflare Pages 对跨域 Worker 的创建并不稳定；PDF 文字提取量通常可接受，
   // 这里明确关闭 Worker，避免“能加载 PDF.js 但无法读取 PDF”的隐性失败。
   const pdf = await window.pdfjsLib.getDocument({
@@ -475,11 +500,11 @@ async function convertPdfToDocxInBrowser() {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const lines = pdfTextLines(content.items);
-    for (const line of lines) paragraphs.push(new window.docx.Paragraph({ text: line }));
+    for (const line of lines) paragraphs.push(new docxRuntime.Paragraph({ text: line }));
   }
   if (!paragraphs.length) throw new Error('PDF 未提取到可编辑文字，可能是扫描版 PDF；请连接 LibreOffice 或 OCR 引擎');
-  const document = new window.docx.Document({ sections: [{ children: paragraphs }] });
-  const blob = await window.docx.Packer.toBlob(document);
+  const document = new docxRuntime.Document({ sections: [{ children: paragraphs }] });
+  const blob = await docxRuntime.Packer.toBlob(document);
   if (!blob || blob.size < 1000) throw new Error('浏览器 Word 导出引擎生成了空文件');
   const outputFileName = `${currentFile.name.replace(/\.[^.]+$/, '')}.docx`;
   publishOutput(blob, outputFileName);
