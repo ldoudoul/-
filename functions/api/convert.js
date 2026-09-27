@@ -7,9 +7,14 @@ function converterBase(env) {
 
 async function proxyConvert(request, base) {
   try {
+    // 只转发 multipart 的 Content-Type。不要把 Pages 的 Host、Content-Length
+    // 等 hop-by-hop 请求头带到 Tunnel，避免流式上传被上游拒绝。
+    const forwardedHeaders = new Headers();
+    const contentType = request.headers.get('content-type');
+    if (contentType) forwardedHeaders.set('content-type', contentType);
     const upstream = await fetch(`${base}/api/convert`, {
       method: 'POST',
-      headers: request.headers,
+      headers: forwardedHeaders,
       body: request.body,
     });
     const responseHeaders = new Headers(upstream.headers);

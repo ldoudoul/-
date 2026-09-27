@@ -146,6 +146,11 @@ function updateCompatibility() {
     compatibilityHint.textContent = '文档：DOCX → PDF · 浏览器端 DOCX 解析与 PDF 导出';
     return;
   }
+  if (deploymentRuntime === 'cloudflare-pages' && source === 'pdf' && target === 'docx') {
+    compatibilityHint.className = 'compatibility-hint compatible';
+    compatibilityHint.textContent = '文档：PDF → DOCX · 浏览器端文字提取与 Word 导出（扫描版需 OCR）';
+    return;
+  }
   if (categorySelect.value === 'audio') {
     compatibilityHint.className = 'compatibility-hint compatible';
     compatibilityHint.textContent = `音频：${source.toUpperCase()} → ${target.toUpperCase()} · ${serverAudioAvailable ? '本机 FFmpeg 服务端优先，浏览器 FFmpeg/WASM 备用' : 'FFmpeg/WASM 浏览器本地转换'}`;
@@ -365,7 +370,8 @@ function loadBrowserLibrary(url, ready, label) {
 async function convertDocxToPdfInBrowser() {
   await Promise.all([
     loadBrowserLibrary('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', () => Boolean(window.mammoth), 'DOCX 解析引擎'),
-    loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js', () => Boolean(window.html2pdf), 'PDF 导出引擎'),
+    loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', () => Boolean(window.html2canvas), '页面截图引擎'),
+    loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', () => Boolean(window.jspdf?.jsPDF), 'PDF 导出引擎'),
   ]);
   const arrayBuffer = await currentFile.arrayBuffer();
   const converted = await window.mammoth.convertToHtml({ arrayBuffer });
@@ -391,14 +397,41 @@ async function convertDocxToPdfInBrowser() {
   document.body.append(wrapper);
   try {
     if (document.fonts?.ready) await document.fonts.ready;
-    const pdfBlob = await window.html2pdf().set({
-      margin: 0,
-      filename: `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`,
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0, windowWidth: 794 },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] },
-    }).from(wrapper).outputPdf('blob');
+    await sleep(30);
+    const canvas = await window.html2canvas(wrapper, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: false,
+      backgroundColor: '#ffffff',
+      logging: false,
+      width: wrapper.scrollWidth,
+      height: wrapper.scrollHeight,
+      windowWidth: Math.max(window.innerWidth, wrapper.scrollWidth),
+      windowHeight: Math.max(window.innerHeight, wrapper.scrollHeight),
+      scrollX: 0,
+      scrollY: 0,
+    });
+    if (!canvas.width || !canvas.height) throw new Error('浏览器页面截图为空，无法生成 PDF');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+    const pageWidthMm = 210;
+    const pageHeightMm = 297;
+    const pageCanvasHeight = Math.max(1, Math.floor(canvas.width * pageHeightMm / pageWidthMm));
+    let pageIndex = 0;
+    for (let sourceTop = 0; sourceTop < canvas.height; sourceTop += pageCanvasHeight) {
+      const sourceHeight = Math.min(pageCanvasHeight, canvas.height - sourceTop);
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = pageCanvasHeight;
+      const pageContext = pageCanvas.getContext('2d');
+      pageContext.fillStyle = '#ffffff';
+      pageContext.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+      pageContext.drawImage(canvas, 0, sourceTop, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight);
+      if (pageIndex > 0) pdf.addPage();
+      pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, pageWidthMm, sourceHeight * pageWidthMm / canvas.width);
+      pageIndex += 1;
+    }
+    const pdfBlob = pdf.output('blob');
     if (!pdfBlob || pdfBlob.size < 1000) throw new Error('浏览器 PDF 引擎生成了空文件，请重试或连接本机 LibreOffice');
     const outputFileName = `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`;
     publishOutput(pdfBlob, outputFileName);
@@ -409,11 +442,52 @@ async function convertDocxToPdfInBrowser() {
   }
 }
 
+function pdfTextLines(items) {
+  const rows = [];
+  for (const item of items) {
+    const text = String(item.str || '').trim();
+    if (!text) continue;
+    const x = Number(item.transform?.[4] || 0);
+    const y = Number(item.transform?.[5] || 0);
+    let row = rows.find((candidate) => Math.abs(candidate.y - y) < 3);
+    if (!row) { row = { y, items: [] }; rows.push(row); }
+    row.items.push({ x, text });
+  }
+  return rows
+    .sort((a, b) => b.y - a.y)
+    .map((row) => row.items.sort((a, b) => a.x - b.x).map((item) => item.text).join(' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+async function convertPdfToDocxInBrowser() {
+  await Promise.all([
+    loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => Boolean(window.pdfjsLib?.getDocument), 'PDF 解析引擎'),
+    loadBrowserLibrary('https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.umd.cjs', () => Boolean(window.docx?.Document && window.docx?.Packer), 'Word 导出引擎'),
+  ]);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await currentFile.arrayBuffer()) }).promise;
+  const paragraphs = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const lines = pdfTextLines(content.items);
+    for (const line of lines) paragraphs.push(new window.docx.Paragraph({ text: line }));
+  }
+  if (!paragraphs.length) throw new Error('PDF 未提取到可编辑文字，可能是扫描版 PDF；请连接 LibreOffice 或 OCR 引擎');
+  const document = new window.docx.Document({ sections: [{ children: paragraphs }] });
+  const blob = await window.docx.Packer.toBlob(document);
+  if (!blob || blob.size < 1000) throw new Error('浏览器 Word 导出引擎生成了空文件');
+  const outputFileName = `${currentFile.name.replace(/\.[^.]+$/, '')}.docx`;
+  publishOutput(blob, outputFileName);
+  return { real:true, outputFileName, engine:'浏览器 PDF 文字提取 + DOCX 导出' };
+}
+
 async function convertDocumentWithServer() {
   const source = extension(currentFile.name);
   const target = formatSelect.value;
   const browserPair = (['txt', 'md'].includes(source) && target === 'html') || (['html', 'htm'].includes(source) && target === 'txt') || source === target;
   if (deploymentRuntime === 'cloudflare-pages' && source === 'docx' && target === 'pdf') return convertDocxToPdfInBrowser();
+  if (deploymentRuntime === 'cloudflare-pages' && source === 'pdf' && target === 'docx') return convertPdfToDocxInBrowser();
   if (deploymentRuntime === 'offline' && browserPair) return convertDocumentInBrowser();
   const form = new FormData();
   form.append('file', currentFile, currentFile.name);
@@ -423,11 +497,16 @@ async function convertDocumentWithServer() {
     response = await fetch('/api/convert', { method:'POST', body:form });
   } catch (error) {
     if (browserPair) return convertDocumentInBrowser();
+    if (source === 'pdf' && target === 'docx') return convertPdfToDocxInBrowser();
     throw new Error('当前网址没有连接文档转换接口；请部署 Cloudflare Functions 或启动 server.py/Docker 后端');
   }
   if (!response.ok) {
     let message = '文档转换服务返回错误';
     try { message = (await response.json()).error || message; } catch { /* 保留默认错误 */ }
+    if (source === 'pdf' && target === 'docx') {
+      addLog('process', '切换浏览器 PDF 引擎', '服务端不可达，改用浏览器提取文字并生成 Word');
+      return convertPdfToDocxInBrowser();
+    }
     throw new Error(message);
   }
   const blob = await response.blob();
