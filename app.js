@@ -370,19 +370,36 @@ async function convertDocxToPdfInBrowser() {
   const arrayBuffer = await currentFile.arrayBuffer();
   const converted = await window.mammoth.convertToHtml({ arrayBuffer });
   const wrapper = document.createElement('article');
-  wrapper.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;box-sizing:border-box;padding:48px;background:#fff;color:#17120b;font:16px/1.7 Arial, sans-serif;';
+  // html2canvas 在部分浏览器中无法可靠捕获视口外元素；导出时使用一个
+  // 实际可渲染的 A4 画布，导出完成后立即移除，不会残留在页面中。
+  wrapper.style.cssText = [
+    'position:absolute',
+    'left:0',
+    'top:0',
+    'z-index:2147483647',
+    'width:794px',
+    'min-height:1123px',
+    'box-sizing:border-box',
+    'padding:48px',
+    'background:#fff',
+    'color:#17120b',
+    'font:16px/1.7 Arial,sans-serif',
+    'pointer-events:none',
+  ].join(';');
   const safeHtml = converted.value.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
-  wrapper.innerHTML = `<style>h1,h2,h3{color:#9b5d08;line-height:1.25}table{border-collapse:collapse;width:100%}td,th{border:1px solid #c9a66b;padding:6px}img{max-width:100%}</style>${safeHtml}`;
+  wrapper.innerHTML = `<style>*,*:before,*:after{box-sizing:border-box}body{margin:0}h1,h2,h3{color:#9b5d08;line-height:1.25}table{border-collapse:collapse;width:100%}td,th{border:1px solid #c9a66b;padding:6px}img{display:block;max-width:100%;height:auto}</style>${safeHtml}`;
   document.body.append(wrapper);
   try {
+    if (document.fonts?.ready) await document.fonts.ready;
     const pdfBlob = await window.html2pdf().set({
       margin: 0,
       filename: `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`,
       image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 1.5, useCORS: true, backgroundColor: '#ffffff' },
-      jsPDF: { unit: 'px', format: [890, 1260], orientation: 'portrait' },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0, windowWidth: 794 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'] },
     }).from(wrapper).outputPdf('blob');
+    if (!pdfBlob || pdfBlob.size < 1000) throw new Error('浏览器 PDF 引擎生成了空文件，请重试或连接本机 LibreOffice');
     const outputFileName = `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`;
     publishOutput(pdfBlob, outputFileName);
     if (converted.messages?.length) addLog('process', 'DOCX 已解析', `${converted.messages.length} 项复杂格式按浏览器兼容方式处理`);
