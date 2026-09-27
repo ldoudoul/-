@@ -32,6 +32,12 @@ Windows 用户也可以双击 `start-format-lab.bat` 启动服务。
 
 当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT、Markdown → EPUB、DOCX/PPTX/XLSX → PDF 和音频格式转换；PDF 作为输入时仍受 LibreOffice 导入过滤器限制。
 
+## Cloudflare Pages 部署说明
+
+项目新增了 `functions/api/health.js` 和 `functions/api/convert.js`。通过 GitHub 连接部署 Cloudflare Pages 时，Pages Functions 会提供线上 `/api/health` 和 `/api/convert`，TXT/MD/HTML 文本转换可以直接在网址中使用，音频转换由浏览器 FFmpeg/WASM 完成。
+
+Cloudflare Pages/Workers 不会运行本项目的 Python `server.py`，也不能在免费 Functions 中直接启动 LibreOffice 或 Pandoc。因此 DOCX、PPTX、XLSX、PDF、EPUB 等完整文档转换仍需要 Docker 后端或单独的外部转换服务。Cloudflare 控制台的“直接上传”不包含 Pages Functions；需要使用 GitHub 部署，并确保生产分支包含 `functions/` 目录。
+
 ## Docker 启动完整文档引擎
 
 当前目录提供 `Dockerfile`。在安装 Docker 的环境中运行：

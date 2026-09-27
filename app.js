@@ -29,6 +29,7 @@ let ffmpegRuntimePromise = null;
 let documentEngineState = 'checking';
 let serverAudioAvailable = false;
 let serverEngines = { libreoffice:false, pandoc:false };
+let deploymentRuntime = 'local';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function withTimeout(promise, ms, message) {
@@ -193,10 +194,15 @@ async function checkDocumentEngine() {
   try {
     const response = await fetch('/api/health');
     if (!response.ok) throw new Error('服务未响应');
-    const { engines } = await response.json();
+    const payload = await response.json();
+    const { engines } = payload;
+    deploymentRuntime = payload.deployment || 'local';
     serverAudioAvailable = Boolean(engines.ffmpeg);
     serverEngines = { libreoffice:Boolean(engines.libreoffice), pandoc:Boolean(engines.pandoc) };
-    if (engines.libreoffice || engines.pandoc) {
+    if (deploymentRuntime === 'cloudflare-pages') {
+      documentEngineState = 'cloudflare';
+      engineHint.textContent = 'Cloudflare Pages Functions 已连接 · 文本转换可用；Office/PDF 需要外部文档引擎；音频使用浏览器 FFmpeg/WASM';
+    } else if (engines.libreoffice || engines.pandoc) {
       documentEngineState = 'full';
       engineHint.textContent = `文档引擎已连接 · ${[engines.libreoffice && 'LibreOffice', engines.pandoc && 'Pandoc'].filter(Boolean).join(' + ')}${engines.libreoffice ? '' : '；Office/PDF 仍需 LibreOffice'}；音频${serverAudioAvailable ? '使用本机 FFmpeg，浏览器 FFmpeg/WASM 备用' : '使用 FFmpeg/WASM'}`;
     } else {
@@ -304,11 +310,52 @@ async function makeDemoOutput() {
   return { real:false, outputFileName };
 }
 
+async function convertDocumentInBrowser() {
+  const source = extension(currentFile.name);
+  const target = formatSelect.value;
+  const stem = currentFile.name.replace(/\.[^.]+$/, '') || 'input';
+  if (['txt', 'md'].includes(source) && target === 'html') {
+    const text = await currentFile.text();
+    const safe = text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+    const html = `<!doctype html><meta charset="utf-8"><title>${stem}</title><main>${safe.replaceAll('\n','<br>')}</main>`;
+    const outputFileName = `${stem}.html`;
+    publishOutput(new Blob([html], { type:'text/html;charset=utf-8' }), outputFileName);
+    return { real:true, outputFileName, engine:'浏览器内置文本转换' };
+  }
+  if (['html', 'htm'].includes(source) && target === 'txt') {
+    const html = await currentFile.text();
+    const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<br\s*\/?\s*>/gi, '\n').replace(/<\/(p|div|h[1-6]|li|tr)\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+      .replace(/\n{3,}/g, '\n\n').trim() + '\n';
+    const outputFileName = `${stem}.txt`;
+    publishOutput(new Blob([text], { type:'text/plain;charset=utf-8' }), outputFileName);
+    return { real:true, outputFileName, engine:'浏览器内置文本转换' };
+  }
+  if (source === target) {
+    const outputFileName = `${stem}.${target}`;
+    publishOutput(currentFile, outputFileName);
+    return { real:true, outputFileName, engine:'浏览器文件复制' };
+  }
+  throw new Error('当前网址只支持文本类浏览器转换；DOCX、PPTX、XLSX、PDF 需要连接外部文档转换引擎');
+}
+
 async function convertDocumentWithServer() {
+  const source = extension(currentFile.name);
+  const target = formatSelect.value;
+  const browserPair = (['txt', 'md'].includes(source) && target === 'html') || (['html', 'htm'].includes(source) && target === 'txt') || source === target;
+  if (deploymentRuntime === 'offline' && browserPair) return convertDocumentInBrowser();
   const form = new FormData();
   form.append('file', currentFile, currentFile.name);
   form.append('target', formatSelect.value);
-  const response = await fetch('/api/convert', { method:'POST', body:form });
+  let response;
+  try {
+    response = await fetch('/api/convert', { method:'POST', body:form });
+  } catch (error) {
+    if (browserPair) return convertDocumentInBrowser();
+    throw new Error('当前网址没有连接文档转换接口；请部署 Cloudflare Functions 或启动 server.py/Docker 后端');
+  }
   if (!response.ok) {
     let message = '文档转换服务返回错误';
     try { message = (await response.json()).error || message; } catch { /* 保留默认错误 */ }
