@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from io import BytesIO
 from email import policy
 from email.parser import BytesParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -120,6 +121,38 @@ def html_to_text(raw: bytes) -> bytes:
     return (value + "\n").encode("utf-8")
 
 
+def pdf_to_text(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as error:
+        raise RuntimeError("PDF 文本提取需要 pypdf，请先安装 requirements.txt") from error
+    reader = PdfReader(BytesIO(data))
+    pages = [(page.extract_text() or "").strip() for page in reader.pages]
+    return "\n\n".join(page for page in pages if page)
+
+
+def pdf_to_docx(data: bytes, title: str) -> bytes:
+    try:
+        from docx import Document
+    except ImportError as error:
+        raise RuntimeError("PDF → Word 需要 python-docx，请先安装 requirements.txt") from error
+    document = Document()
+    document.core_properties.title = title
+    text = pdf_to_text(data)
+    if not text:
+        document.add_paragraph("未提取到可编辑文本。该 PDF 可能是扫描图片，需要 OCR。")
+    else:
+        for index, page in enumerate(text.split("\n\n")):
+            if index:
+                document.add_page_break()
+            for paragraph in re.split(r"\n{2,}", page):
+                if paragraph.strip():
+                    document.add_paragraph(paragraph.strip())
+    output = BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
 def output_path_for(workdir: Path, stem: str, target: str) -> Path:
     expected = workdir / f"{stem}.{target}"
     if expected.exists():
@@ -170,6 +203,10 @@ def convert_document(filename: str, data: bytes, target: str) -> tuple[bytes, st
         return markdown_to_html(data, stem), f"{stem}.html", "builtin-markdown", "text/html; charset=utf-8"
     if source in {"html", "htm"} and target == "txt":
         return html_to_text(data), f"{stem}.txt", "builtin-html-text", "text/plain; charset=utf-8"
+    if source == "pdf" and target == "txt":
+        return pdf_to_text(data).encode("utf-8"), f"{stem}.txt", "PDF text extraction", "text/plain; charset=utf-8"
+    if source == "pdf" and target == "docx":
+        return pdf_to_docx(data, stem), f"{stem}.docx", "PDF text extraction + python-docx", MIME_TYPES["docx"]
     if source == target:
         return data, f"{stem}.{target}", "copy", MIME_TYPES.get(target, mimetypes.guess_type(f"x.{target}")[0] or "application/octet-stream")
 

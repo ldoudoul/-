@@ -30,7 +30,7 @@ Windows 用户也可以双击 `start-format-lab.bat` 启动服务。
 - 当前开发电脑已检测到 Pandoc 3.11 和 LibreOffice 26.8，Office → PDF 转换会调用 LibreOffice；服务会按实际引擎状态给出提示，不会生成伪结果；
 - 音频转换优先经过本地 Python 服务调用 FFmpeg，浏览器端 FFmpeg/WASM 作为备用，不上传云端。
 
-当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT、Markdown → EPUB、DOCX/PPTX/XLSX → PDF 和音频格式转换；PDF 作为输入时仍受 LibreOffice 导入过滤器限制。
+当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT、Markdown → EPUB、DOCX/PPTX/XLSX → PDF、PDF → TXT/DOCX 和音频格式转换。PDF → TXT/DOCX 使用文本提取生成可编辑文档；扫描型 PDF 仍需要 OCR，复杂版式不会一比一还原。
 
 ## Cloudflare Pages 部署说明
 
