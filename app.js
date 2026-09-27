@@ -464,8 +464,12 @@ async function convertPdfToDocxInBrowser() {
     loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => Boolean(window.pdfjsLib?.getDocument), 'PDF 解析引擎'),
     loadBrowserLibrary('https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.umd.cjs', () => Boolean(window.docx?.Document && window.docx?.Packer), 'Word 导出引擎'),
   ]);
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await currentFile.arrayBuffer()) }).promise;
+  // Cloudflare Pages 对跨域 Worker 的创建并不稳定；PDF 文字提取量通常可接受，
+  // 这里明确关闭 Worker，避免“能加载 PDF.js 但无法读取 PDF”的隐性失败。
+  const pdf = await window.pdfjsLib.getDocument({
+    data: new Uint8Array(await currentFile.arrayBuffer()),
+    disableWorker: true,
+  }).promise;
   const paragraphs = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -529,7 +533,7 @@ convertButton.addEventListener('click', async () => {
     addLog('success', '转换任务完成', `${result.outputFileName} 已生成 · ${result.engine || '内置转换'} · 可打开或下载`);
     showToast(result.real ? '转换完成，可打开结果文件' : '演示结果已生成，可打开结果文件');
   } catch (error) {
-    updatePath(0); addLog('error', '转换失败', error.message || 'FFmpeg/WASM 引擎加载失败'); showToast('转换失败，请检查网络或文件格式'); console.error(error);
+    updatePath(0); addLog('error', '转换失败', error.message || 'FFmpeg/WASM 引擎加载失败'); showToast(error.message || '转换失败，请检查网络或文件格式'); console.error(error);
   } finally {
     await sleep(500); convertButton.innerHTML = original; convertButton.disabled = false;
   }
