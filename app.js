@@ -141,6 +141,11 @@ function updateCompatibility() {
   }
   const source = extension(currentFile.name);
   const target = formatSelect.value;
+  if (deploymentRuntime === 'cloudflare-pages' && source === 'docx' && target === 'pdf') {
+    compatibilityHint.className = 'compatibility-hint compatible';
+    compatibilityHint.textContent = '文档：DOCX → PDF · 浏览器端 DOCX 解析与 PDF 导出';
+    return;
+  }
   if (categorySelect.value === 'audio') {
     compatibilityHint.className = 'compatibility-hint compatible';
     compatibilityHint.textContent = `音频：${source.toUpperCase()} → ${target.toUpperCase()} · ${serverAudioAvailable ? '本机 FFmpeg 服务端优先，浏览器 FFmpeg/WASM 备用' : 'FFmpeg/WASM 浏览器本地转换'}`;
@@ -201,7 +206,7 @@ async function checkDocumentEngine() {
     serverEngines = { libreoffice:Boolean(engines.libreoffice), pandoc:Boolean(engines.pandoc) };
     if (deploymentRuntime === 'cloudflare-pages') {
       documentEngineState = 'cloudflare';
-      engineHint.textContent = 'Cloudflare Pages Functions 已连接 · 文本转换可用；Office/PDF 需要外部文档引擎；音频使用浏览器 FFmpeg/WASM';
+      engineHint.textContent = 'Cloudflare Pages Functions 已连接 · DOCX→PDF 使用浏览器引擎；其余 Office/PDF 仍需外部文档引擎；音频使用浏览器 FFmpeg/WASM';
     } else if (engines.libreoffice || engines.pandoc) {
       documentEngineState = 'full';
       engineHint.textContent = `文档引擎已连接 · ${[engines.libreoffice && 'LibreOffice', engines.pandoc && 'Pandoc'].filter(Boolean).join(' + ')}${engines.libreoffice ? '' : '；Office/PDF 仍需 LibreOffice'}；音频${serverAudioAvailable ? '使用本机 FFmpeg，浏览器 FFmpeg/WASM 备用' : '使用 FFmpeg/WASM'}`;
@@ -341,10 +346,57 @@ async function convertDocumentInBrowser() {
   throw new Error('当前网址只支持文本类浏览器转换；DOCX、PPTX、XLSX、PDF 需要连接外部文档转换引擎');
 }
 
+const browserLibraryPromises = new Map();
+function loadBrowserLibrary(url, ready, label) {
+  if (ready()) return Promise.resolve();
+  if (browserLibraryPromises.has(url)) return browserLibraryPromises.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.onload = () => ready() ? resolve() : reject(new Error(`${label} 加载后不可用`));
+    script.onerror = () => reject(new Error(`${label} 加载失败，请检查网络或 CDN 访问`));
+    document.head.append(script);
+  });
+  browserLibraryPromises.set(url, promise);
+  return promise;
+}
+
+async function convertDocxToPdfInBrowser() {
+  await Promise.all([
+    loadBrowserLibrary('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', () => Boolean(window.mammoth), 'DOCX 解析引擎'),
+    loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js', () => Boolean(window.html2pdf), 'PDF 导出引擎'),
+  ]);
+  const arrayBuffer = await currentFile.arrayBuffer();
+  const converted = await window.mammoth.convertToHtml({ arrayBuffer });
+  const wrapper = document.createElement('article');
+  wrapper.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;box-sizing:border-box;padding:48px;background:#fff;color:#17120b;font:16px/1.7 Arial, sans-serif;';
+  const safeHtml = converted.value.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
+  wrapper.innerHTML = `<style>h1,h2,h3{color:#9b5d08;line-height:1.25}table{border-collapse:collapse;width:100%}td,th{border:1px solid #c9a66b;padding:6px}img{max-width:100%}</style>${safeHtml}`;
+  document.body.append(wrapper);
+  try {
+    const pdfBlob = await window.html2pdf().set({
+      margin: 0,
+      filename: `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 1.5, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'px', format: [890, 1260], orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    }).from(wrapper).outputPdf('blob');
+    const outputFileName = `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`;
+    publishOutput(pdfBlob, outputFileName);
+    if (converted.messages?.length) addLog('process', 'DOCX 已解析', `${converted.messages.length} 项复杂格式按浏览器兼容方式处理`);
+    return { real:true, outputFileName, engine:'浏览器 DOCX/PDF 引擎' };
+  } finally {
+    wrapper.remove();
+  }
+}
+
 async function convertDocumentWithServer() {
   const source = extension(currentFile.name);
   const target = formatSelect.value;
   const browserPair = (['txt', 'md'].includes(source) && target === 'html') || (['html', 'htm'].includes(source) && target === 'txt') || source === target;
+  if (deploymentRuntime === 'cloudflare-pages' && source === 'docx' && target === 'pdf') return convertDocxToPdfInBrowser();
   if (deploymentRuntime === 'offline' && browserPair) return convertDocumentInBrowser();
   const form = new FormData();
   form.append('file', currentFile, currentFile.name);

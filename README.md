@@ -34,9 +34,9 @@ Windows 用户也可以双击 `start-format-lab.bat` 启动服务。
 
 ## Cloudflare Pages 部署说明
 
-项目新增了 `functions/api/health.js` 和 `functions/api/convert.js`。通过 GitHub 连接部署 Cloudflare Pages 时，Pages Functions 会提供线上 `/api/health` 和 `/api/convert`，TXT/MD/HTML 文本转换可以直接在网址中使用，音频转换由浏览器 FFmpeg/WASM 完成。
+项目新增了 `functions/api/health.js` 和 `functions/api/convert.js`。通过 GitHub 连接部署 Cloudflare Pages 时，Pages Functions 会提供线上 `/api/health` 和 `/api/convert`，TXT/MD/HTML 文本转换可以直接在网址中使用；DOCX → PDF 会在浏览器中用 Mammoth 解析并用 html2pdf.js 导出，音频转换由浏览器 FFmpeg/WASM 完成。
 
-Cloudflare Pages/Workers 不会运行本项目的 Python `server.py`，也不能在免费 Functions 中直接启动 LibreOffice 或 Pandoc。因此 DOCX、PPTX、XLSX、PDF、EPUB 等完整文档转换仍需要 Docker 后端或单独的外部转换服务。Cloudflare 控制台的“直接上传”不包含 Pages Functions；需要使用 GitHub 部署，并确保生产分支包含 `functions/` 目录。
+浏览器 DOCX → PDF 适合课程作业和中小型文档，复杂分页、字体和图表的还原可能与 LibreOffice 不同。Cloudflare Pages/Workers 不会运行本项目的 Python `server.py`，也不能在免费 Functions 中直接启动 LibreOffice 或 Pandoc。因此 PPTX、XLSX、PDF、EPUB 等完整文档转换仍需要 Docker 后端或单独的外部转换服务。Cloudflare 控制台的“直接上传”不包含 Pages Functions；需要使用 GitHub 部署，并确保生产分支包含 `functions/` 目录。
 
 ## Docker 启动完整文档引擎
 
