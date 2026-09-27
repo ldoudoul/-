@@ -27,8 +27,17 @@ let outputObjectUrl = '';
 let toastTimer;
 let ffmpegRuntimePromise = null;
 let documentEngineState = 'checking';
+let serverAudioAvailable = false;
+let serverEngines = { libreoffice:false, pandoc:false };
+let deploymentRuntime = 'local';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    Promise.resolve(promise).then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
+}
 const showToast = (message) => { toast.textContent = message; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 3000); };
 const formatBytes = (bytes) => { if (!bytes) return '0 KB'; const units = ['B','KB','MB','GB']; const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`; };
 const extension = (name) => name.includes('.') ? name.split('.').pop().toLowerCase() : 'file';
@@ -132,9 +141,14 @@ function updateCompatibility() {
   }
   const source = extension(currentFile.name);
   const target = formatSelect.value;
+  if (deploymentRuntime === 'cloudflare-pages' && source === 'docx' && target === 'pdf') {
+    compatibilityHint.className = 'compatibility-hint compatible';
+    compatibilityHint.textContent = '文档：DOCX → PDF · 浏览器端 DOCX 解析与 PDF 导出';
+    return;
+  }
   if (categorySelect.value === 'audio') {
     compatibilityHint.className = 'compatibility-hint compatible';
-    compatibilityHint.textContent = `音频：${source.toUpperCase()} → ${target.toUpperCase()} · FFmpeg/WASM 浏览器本地转换`;
+    compatibilityHint.textContent = `音频：${source.toUpperCase()} → ${target.toUpperCase()} · ${serverAudioAvailable ? '本机 FFmpeg 服务端优先，浏览器 FFmpeg/WASM 备用' : 'FFmpeg/WASM 浏览器本地转换'}`;
     return;
   }
   if (categorySelect.value === 'data') {
@@ -148,12 +162,20 @@ function updateCompatibility() {
     compatibilityHint.textContent = `文档：${source.toUpperCase()} → ${target.toUpperCase()} · 内置文档服务可直接处理`;
     return;
   }
-  if (documentEngineState === 'full') {
+  const pandocPair = ['md', 'markdown'].includes(source) || ['md', 'markdown', 'epub'].includes(target);
+  const libreOfficePair = ['doc', 'docx', 'odt', 'rtf', 'ppt', 'pptx', 'odp', 'xls', 'xlsx', 'ods', 'html', 'htm', 'txt', 'pdf'].includes(source) || ['pdf', 'docx', 'pptx', 'xlsx', 'html', 'txt', 'odt', 'odp', 'ods'].includes(target);
+  if ((pandocPair && serverEngines.pandoc) || (!pandocPair && libreOfficePair && serverEngines.libreoffice)) {
     compatibilityHint.className = 'compatibility-hint compatible';
     compatibilityHint.textContent = `文档：${source.toUpperCase()} → ${target.toUpperCase()} · 服务端引擎可尝试真实转换`;
+  } else if (pandocPair && !serverEngines.pandoc) {
+    compatibilityHint.className = 'compatibility-hint warning';
+    compatibilityHint.textContent = `文档：${source.toUpperCase()} → ${target.toUpperCase()} · 需要 Pandoc，当前环境未连接`;
+  } else if (libreOfficePair && !serverEngines.libreoffice) {
+    compatibilityHint.className = 'compatibility-hint warning';
+    compatibilityHint.textContent = `文档：${source.toUpperCase()} → ${target.toUpperCase()} · 需要 LibreOffice，当前环境未连接`;
   } else {
     compatibilityHint.className = 'compatibility-hint warning';
-    compatibilityHint.textContent = `文档：${source.toUpperCase()} → ${target.toUpperCase()} · 需要 LibreOffice/Pandoc，当前环境建议使用 Docker`;
+    compatibilityHint.textContent = `文档：${source.toUpperCase()} → ${target.toUpperCase()} · 当前转换组合暂未配置引擎`;
   }
 }
 
@@ -177,17 +199,26 @@ async function checkDocumentEngine() {
   try {
     const response = await fetch('/api/health');
     if (!response.ok) throw new Error('服务未响应');
-    const { engines } = await response.json();
-    if (engines.libreoffice || engines.pandoc) {
+    const payload = await response.json();
+    const { engines } = payload;
+    deploymentRuntime = payload.deployment || 'local';
+    serverAudioAvailable = Boolean(engines.ffmpeg);
+    serverEngines = { libreoffice:Boolean(engines.libreoffice), pandoc:Boolean(engines.pandoc) };
+    if (deploymentRuntime === 'cloudflare-pages') {
+      documentEngineState = 'cloudflare';
+      engineHint.textContent = 'Cloudflare Pages Functions 已连接 · DOCX→PDF 使用浏览器引擎；其余 Office/PDF 仍需外部文档引擎；音频使用浏览器 FFmpeg/WASM';
+    } else if (engines.libreoffice || engines.pandoc) {
       documentEngineState = 'full';
-      engineHint.textContent = `文档引擎已连接 · ${[engines.libreoffice && 'LibreOffice', engines.pandoc && 'Pandoc'].filter(Boolean).join(' + ')}；音频使用 FFmpeg/WASM`;
+      engineHint.textContent = `文档引擎已连接 · ${[engines.libreoffice && 'LibreOffice', engines.pandoc && 'Pandoc'].filter(Boolean).join(' + ')}${engines.libreoffice ? '' : '；Office/PDF 仍需 LibreOffice'}；音频${serverAudioAvailable ? '使用本机 FFmpeg，浏览器 FFmpeg/WASM 备用' : '使用 FFmpeg/WASM'}`;
     } else {
       documentEngineState = 'builtin';
-      engineHint.textContent = '文档服务已连接 · 当前仅启用内置文本转换，Office/PDF 请用 Docker 启动完整引擎；音频使用 FFmpeg/WASM';
+      engineHint.textContent = `文档服务已连接 · 当前仅启用内置文本转换，Office/PDF 请用 Docker 启动完整引擎；音频${serverAudioAvailable ? '使用本机 FFmpeg，浏览器 FFmpeg/WASM 备用' : '使用 FFmpeg/WASM'}`;
     }
     updateCompatibility();
   } catch {
     documentEngineState = 'offline';
+    serverAudioAvailable = false;
+    serverEngines = { libreoffice:false, pandoc:false };
     engineHint.textContent = '文档服务未启动 · 请运行 python server.py 或使用 Docker；音频使用 FFmpeg/WASM';
     updateCompatibility();
   }
@@ -197,19 +228,18 @@ checkDocumentEngine();
 async function loadFFmpeg() {
   if (ffmpegRuntimePromise) return ffmpegRuntimePromise;
   ffmpegRuntimePromise = (async () => {
-    const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
-      import('https://esm.sh/@ffmpeg/ffmpeg@0.12.15'),
-      import('https://esm.sh/@ffmpeg/util@0.12.2'),
-    ]);
+    const [{ FFmpeg }, { fetchFile, toBlobURL }] = await withTimeout(Promise.all([
+      withTimeout(import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js'), 8000, 'FFmpeg 模块加载超时'),
+      withTimeout(import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js'), 8000, 'FFmpeg 工具模块加载超时'),
+    ]), 9000, 'FFmpeg/WASM 远程资源加载超时');
     const ffmpeg = new FFmpeg();
     ffmpeg.on('log', ({ message }) => console.debug('[FFmpeg]', message));
     ffmpeg.on('progress', ({ progress }) => { if (convertButton.disabled) convertButton.querySelector('span').textContent = `音频处理中 ${Math.round(progress * 100)}%`; });
     const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      classWorkerURL: await toBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js', 'text/javascript'),
-    });
+    const coreURL = await withTimeout(toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'), 10000, 'FFmpeg 核心脚本加载超时');
+    const wasmURL = await withTimeout(toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'), 10000, 'FFmpeg WASM 文件加载超时');
+    const classWorkerURL = await withTimeout(toBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js', 'text/javascript'), 10000, 'FFmpeg Worker 加载超时');
+    await withTimeout(ffmpeg.load({ coreURL, wasmURL, classWorkerURL }), 12000, 'FFmpeg/WASM 引擎启动超时');
     return { ffmpeg, fetchFile };
   })().catch((error) => { ffmpegRuntimePromise = null; throw error; });
   return ffmpegRuntimePromise;
@@ -233,6 +263,41 @@ async function convertAudioWithFFmpeg() {
   return { real:true, outputFileName };
 }
 
+async function convertAudioWithServer() {
+  const form = new FormData();
+  form.append('file', currentFile, currentFile.name);
+  form.append('target', formatSelect.value);
+  const response = await fetch('/api/convert', { method:'POST', body:form });
+  if (!response.ok) {
+    let message = '本机 FFmpeg 音频服务返回错误';
+    try { message = (await response.json()).error || message; } catch { /* 保留默认错误 */ }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const outputFileName = response.headers.get('X-Output-Filename') || `${currentFile.name.replace(/\.[^.]+$/,'')}.${formatSelect.value}`;
+  const engineHeader = response.headers.get('X-Conversion-Engine');
+  const engine = engineHeader === 'FFmpeg-server' ? 'FFmpeg 服务端' : (engineHeader || 'FFmpeg 服务端');
+  publishOutput(blob, outputFileName);
+  return { real:true, outputFileName, engine };
+}
+
+async function convertAudio() {
+  if (serverAudioAvailable) {
+    addLog('process', '使用本机音频引擎', '检测到本机 FFmpeg，优先使用本地服务端转换');
+    try {
+      return await convertAudioWithServer();
+    } catch (serverError) {
+      addLog('process', '切换浏览器音频引擎', '本机 FFmpeg 转换失败，尝试 FFmpeg/WASM');
+      console.warn('本机 FFmpeg 转换失败，尝试 FFmpeg/WASM', serverError);
+    }
+  }
+  try {
+    return await convertAudioWithFFmpeg();
+  } catch (error) {
+    throw error;
+  }
+}
+
 async function makeDemoOutput() {
   const target = formatSelect.value;
   if (currentFile && ['txt','md'].includes(extension(currentFile.name)) && target === 'html') {
@@ -250,11 +315,116 @@ async function makeDemoOutput() {
   return { real:false, outputFileName };
 }
 
+async function convertDocumentInBrowser() {
+  const source = extension(currentFile.name);
+  const target = formatSelect.value;
+  const stem = currentFile.name.replace(/\.[^.]+$/, '') || 'input';
+  if (['txt', 'md'].includes(source) && target === 'html') {
+    const text = await currentFile.text();
+    const safe = text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+    const html = `<!doctype html><meta charset="utf-8"><title>${stem}</title><main>${safe.replaceAll('\n','<br>')}</main>`;
+    const outputFileName = `${stem}.html`;
+    publishOutput(new Blob([html], { type:'text/html;charset=utf-8' }), outputFileName);
+    return { real:true, outputFileName, engine:'浏览器内置文本转换' };
+  }
+  if (['html', 'htm'].includes(source) && target === 'txt') {
+    const html = await currentFile.text();
+    const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<br\s*\/?\s*>/gi, '\n').replace(/<\/(p|div|h[1-6]|li|tr)\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+      .replace(/\n{3,}/g, '\n\n').trim() + '\n';
+    const outputFileName = `${stem}.txt`;
+    publishOutput(new Blob([text], { type:'text/plain;charset=utf-8' }), outputFileName);
+    return { real:true, outputFileName, engine:'浏览器内置文本转换' };
+  }
+  if (source === target) {
+    const outputFileName = `${stem}.${target}`;
+    publishOutput(currentFile, outputFileName);
+    return { real:true, outputFileName, engine:'浏览器文件复制' };
+  }
+  throw new Error('当前网址只支持文本类浏览器转换；DOCX、PPTX、XLSX、PDF 需要连接外部文档转换引擎');
+}
+
+const browserLibraryPromises = new Map();
+function loadBrowserLibrary(url, ready, label) {
+  if (ready()) return Promise.resolve();
+  if (browserLibraryPromises.has(url)) return browserLibraryPromises.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.onload = () => ready() ? resolve() : reject(new Error(`${label} 加载后不可用`));
+    script.onerror = () => reject(new Error(`${label} 加载失败，请检查网络或 CDN 访问`));
+    document.head.append(script);
+  });
+  browserLibraryPromises.set(url, promise);
+  return promise;
+}
+
+async function convertDocxToPdfInBrowser() {
+  await Promise.all([
+    loadBrowserLibrary('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js', () => Boolean(window.mammoth), 'DOCX 解析引擎'),
+    loadBrowserLibrary('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js', () => Boolean(window.html2pdf), 'PDF 导出引擎'),
+  ]);
+  const arrayBuffer = await currentFile.arrayBuffer();
+  const converted = await window.mammoth.convertToHtml({ arrayBuffer });
+  const wrapper = document.createElement('article');
+  // html2canvas 在部分浏览器中无法可靠捕获视口外元素；导出时使用一个
+  // 实际可渲染的 A4 画布，导出完成后立即移除，不会残留在页面中。
+  wrapper.style.cssText = [
+    'position:absolute',
+    'left:0',
+    'top:0',
+    'z-index:2147483647',
+    'width:794px',
+    'min-height:1123px',
+    'box-sizing:border-box',
+    'padding:48px',
+    'background:#fff',
+    'color:#17120b',
+    'font:16px/1.7 Arial,sans-serif',
+    'pointer-events:none',
+  ].join(';');
+  const safeHtml = converted.value.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
+  wrapper.innerHTML = `<style>*,*:before,*:after{box-sizing:border-box}body{margin:0}h1,h2,h3{color:#9b5d08;line-height:1.25}table{border-collapse:collapse;width:100%}td,th{border:1px solid #c9a66b;padding:6px}img{display:block;max-width:100%;height:auto}</style>${safeHtml}`;
+  document.body.append(wrapper);
+  try {
+    if (document.fonts?.ready) await document.fonts.ready;
+    const pdfBlob = await window.html2pdf().set({
+      margin: 0,
+      filename: `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0, windowWidth: 794 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    }).from(wrapper).outputPdf('blob');
+    if (!pdfBlob || pdfBlob.size < 1000) throw new Error('浏览器 PDF 引擎生成了空文件，请重试或连接本机 LibreOffice');
+    const outputFileName = `${currentFile.name.replace(/\.[^.]+$/, '')}.pdf`;
+    publishOutput(pdfBlob, outputFileName);
+    if (converted.messages?.length) addLog('process', 'DOCX 已解析', `${converted.messages.length} 项复杂格式按浏览器兼容方式处理`);
+    return { real:true, outputFileName, engine:'浏览器 DOCX/PDF 引擎' };
+  } finally {
+    wrapper.remove();
+  }
+}
+
 async function convertDocumentWithServer() {
+  const source = extension(currentFile.name);
+  const target = formatSelect.value;
+  const browserPair = (['txt', 'md'].includes(source) && target === 'html') || (['html', 'htm'].includes(source) && target === 'txt') || source === target;
+  if (deploymentRuntime === 'cloudflare-pages' && source === 'docx' && target === 'pdf') return convertDocxToPdfInBrowser();
+  if (deploymentRuntime === 'offline' && browserPair) return convertDocumentInBrowser();
   const form = new FormData();
   form.append('file', currentFile, currentFile.name);
   form.append('target', formatSelect.value);
-  const response = await fetch('/api/convert', { method:'POST', body:form });
+  let response;
+  try {
+    response = await fetch('/api/convert', { method:'POST', body:form });
+  } catch (error) {
+    if (browserPair) return convertDocumentInBrowser();
+    throw new Error('当前网址没有连接文档转换接口；请部署 Cloudflare Functions 或启动 server.py/Docker 后端');
+  }
   if (!response.ok) {
     let message = '文档转换服务返回错误';
     try { message = (await response.json()).error || message; } catch { /* 保留默认错误 */ }
@@ -275,7 +445,7 @@ convertButton.addEventListener('click', async () => {
   addLog('process', '转换任务已开始', `${currentFile.name} → ${formatSelect.value.toUpperCase()}`);
   try {
     for (let step = 0; step < labels.length; step += 1) { updatePath(step); convertButton.querySelector('span').textContent = labels[step]; await sleep(520); }
-    const result = categorySelect.value === 'audio' ? await convertAudioWithFFmpeg() : categorySelect.value === 'data' ? await makeDemoOutput() : await convertDocumentWithServer();
+    const result = categorySelect.value === 'audio' ? await convertAudio() : categorySelect.value === 'data' ? await makeDemoOutput() : await convertDocumentWithServer();
     updatePath(3); convertButton.querySelector('span').textContent = '转换完成';
     addLog('success', '转换任务完成', `${result.outputFileName} 已生成 · ${result.engine || '内置转换'} · 可打开或下载`);
     showToast(result.real ? '转换完成，可打开结果文件' : '演示结果已生成，可打开结果文件');

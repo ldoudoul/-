@@ -5,7 +5,7 @@
 ## 当前版本
 
 - 已完成响应式页面、拖拽上传、输出格式选择、转换路径动画和活动记录。
-- 已加入音频转换类别，支持 MP3、WAV、M4A、FLAC、OGG 输出，并使用 `ffmpeg.wasm` 在浏览器本地处理。
+- 已加入音频转换类别，支持 MP3、WAV、M4A、FLAC、OGG 输出；检测到本机 FFmpeg 时优先通过本地服务端转换，浏览器端 `ffmpeg.wasm` 作为备用。
 - 文档转换已接入本地 `server.py` 服务：Markdown/TXT → HTML、HTML → TXT 使用内置转换器；Office、PDF、EPUB 等由 LibreOffice/Pandoc 接管（引擎存在时）。
 - 转换完成后提供“打开转换后的文件”和“重新下载”按钮，并根据结果类型提供 HTML/PDF、文本、音频或格式说明预览。
 - 转换前会显示输入格式、输出格式、可用引擎和兼容性提示，避免把演示输出误认为真实转换结果。
@@ -27,10 +27,22 @@ Windows 用户也可以双击 `start-format-lab.bat` 启动服务。
 
 - Markdown/TXT → HTML、HTML → TXT 使用内置转换器；
 - DOCX、PPTX、XLSX、PDF、EPUB 等格式由 LibreOffice/Pandoc 接管；
-- 当前开发电脑未安装 LibreOffice/Pandoc，因此 Office/PDF 转换会给出明确提示，不会生成伪结果；
-- 音频转换不经过本地 Python 服务，使用浏览器端 FFmpeg/WASM。
+- 当前开发电脑已检测到 Pandoc 3.11 和 LibreOffice 26.8，Office → PDF 转换会调用 LibreOffice；服务会按实际引擎状态给出提示，不会生成伪结果；
+- 音频转换优先经过本地 Python 服务调用 FFmpeg，浏览器端 FFmpeg/WASM 作为备用，不上传云端。
 
-当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT 和音频格式转换；Office/PDF/EPUB 需要按下方 Docker 方式启动完整引擎。
+当前版本可以直接用于 Markdown/TXT → HTML、HTML → TXT、Markdown → EPUB、DOCX/PPTX/XLSX → PDF、PDF → TXT/DOCX 和音频格式转换。PDF → TXT/DOCX 使用文本提取生成可编辑文档；扫描型 PDF 仍需要 OCR，复杂版式不会一比一还原。
+
+## Cloudflare Pages 部署说明
+
+项目新增了 `functions/api/health.js` 和 `functions/api/convert.js`。通过 GitHub 连接部署 Cloudflare Pages 时，Pages Functions 会提供线上 `/api/health` 和 `/api/convert`，TXT/MD/HTML 文本转换可以直接在网址中使用；DOCX → PDF 会在浏览器中用 Mammoth 解析并用 html2pdf.js 导出，音频转换由浏览器 FFmpeg/WASM 完成。
+
+浏览器 DOCX → PDF 适合课程作业和中小型文档，复杂分页、字体和图表的还原可能与 LibreOffice 不同。Cloudflare Pages/Workers 不会运行本项目的 Python `server.py`，也不能在免费 Functions 中直接启动 LibreOffice 或 Pandoc。因此 PPTX、XLSX、PDF、EPUB 等完整文档转换仍需要 Docker 后端或单独的外部转换服务。Cloudflare 控制台的“直接上传”不包含 Pages Functions；需要使用 GitHub 部署，并确保生产分支包含 `functions/` 目录。
+
+### 方案一：连接本机 LibreOffice
+
+如果希望网址调用本机已安装的 LibreOffice，可安装 Cloudflare `cloudflared`，然后双击 `start-format-lab-tunnel.bat`。脚本会启动本机 `server.py` 和临时 Tunnel；把输出的 `https://*.trycloudflare.com` 地址配置到 Cloudflare Pages 的环境变量 `CONVERTER_API_BASE`，例如 `https://example.trycloudflare.com`，再重新部署 Pages Functions。部署后 `/api/health` 会透传本机的 LibreOffice/Pandoc/FFmpeg 状态，DOCX/PPTX/XLSX/PDF 请求也会透传给本机。
+
+临时 Tunnel 的地址在重启后会变化，电脑关机、Python 服务关闭或 Tunnel 关闭时，线上转换会暂时不可用。需要长期稳定网址时，应改用 Cloudflare Named Tunnel 或把同一个 Docker 转换服务部署到长期运行的主机。
 
 ## Docker 启动完整文档引擎
 
@@ -56,7 +68,10 @@ docker run --rm -p 4173:4173 format-lab
 - [x] 增加转换前后文件预览与格式兼容性提示。
 - [x] 接入浏览器端 FFmpeg/WASM 音频转换和本地文档转换接口。
 - [x] 补充需求设计、AI 提示词记录和 Git 协作说明。
-- [ ] 在具备 LibreOffice/Pandoc 的 Docker 环境中验证 PDF、DOCX、PPTX、EPUB 的真实转换。
+- [x] 在本机验证 Pandoc 真实转换：Markdown → EPUB。
+- [x] 接入 LibreOffice，并验证 DOCX/PPTX/XLSX → PDF 的真实转换。
+- [ ] 增加 PDF 作为输入的专用文本提取或 OCR 转换路径。
+- [x] 修复音频远程 FFmpeg/WASM 加载失败时的本机 FFmpeg 服务端兜底，并验证 WAV → MP3/WAV/M4A/FLAC/OGG。
 - [ ] 根据课程小组的实际成员、分支、PR 和冲突记录补充最终提交信息。
 
 ## 参考素材
