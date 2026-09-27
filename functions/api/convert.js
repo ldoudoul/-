@@ -1,6 +1,26 @@
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const headers = { 'Cache-Control': 'no-store' };
 
+function converterBase(env) {
+  return String(env?.CONVERTER_API_BASE || '').trim().replace(/\/$/, '');
+}
+
+async function proxyConvert(request, base) {
+  try {
+    const upstream = await fetch(`${base}/api/convert`, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+    });
+    const responseHeaders = new Headers(upstream.headers);
+    responseHeaders.set('Cache-Control', 'no-store');
+    responseHeaders.delete('content-length');
+    return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+  } catch (error) {
+    return jsonError(502, `本机转换服务不可达：${error?.message || 'Tunnel 未连接'}`);
+  }
+}
+
 function safeFilename(value) {
   const base = String(value || 'input').split(/[\\/]/).pop();
   return base.replace(/[^\w.()\-\u4e00-\u9fff ]+/g, '_').trim().replace(/[ .]+$/, '') || 'input';
@@ -68,7 +88,9 @@ function fileResponse(data, filename, contentType, engine) {
   });
 }
 
-export async function onRequestPost({ request }) {
+export async function onRequestPost({ request, env }) {
+  const base = converterBase(env);
+  if (base) return proxyConvert(request, base);
   try {
     const form = await request.formData();
     const file = form.get('file');

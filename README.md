@@ -38,6 +38,12 @@ Windows 用户也可以双击 `start-format-lab.bat` 启动服务。
 
 浏览器 DOCX → PDF 适合课程作业和中小型文档，复杂分页、字体和图表的还原可能与 LibreOffice 不同。Cloudflare Pages/Workers 不会运行本项目的 Python `server.py`，也不能在免费 Functions 中直接启动 LibreOffice 或 Pandoc。因此 PPTX、XLSX、PDF、EPUB 等完整文档转换仍需要 Docker 后端或单独的外部转换服务。Cloudflare 控制台的“直接上传”不包含 Pages Functions；需要使用 GitHub 部署，并确保生产分支包含 `functions/` 目录。
 
+### 方案一：连接本机 LibreOffice
+
+如果希望网址调用本机已安装的 LibreOffice，可安装 Cloudflare `cloudflared`，然后双击 `start-format-lab-tunnel.bat`。脚本会启动本机 `server.py` 和临时 Tunnel；把输出的 `https://*.trycloudflare.com` 地址配置到 Cloudflare Pages 的环境变量 `CONVERTER_API_BASE`，例如 `https://example.trycloudflare.com`，再重新部署 Pages Functions。部署后 `/api/health` 会透传本机的 LibreOffice/Pandoc/FFmpeg 状态，DOCX/PPTX/XLSX/PDF 请求也会透传给本机。
+
+临时 Tunnel 的地址在重启后会变化，电脑关机、Python 服务关闭或 Tunnel 关闭时，线上转换会暂时不可用。需要长期稳定网址时，应改用 Cloudflare Named Tunnel 或把同一个 Docker 转换服务部署到长期运行的主机。
+
 ## Docker 启动完整文档引擎
 
 当前目录提供 `Dockerfile`。在安装 Docker 的环境中运行：
